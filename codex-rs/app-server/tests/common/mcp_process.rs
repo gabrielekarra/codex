@@ -21,7 +21,6 @@ use codex_app_server_protocol::GetAuthStatusParams;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::InterruptConversationParams;
 use codex_app_server_protocol::ListConversationsParams;
-use codex_app_server_protocol::ListModelsParams;
 use codex_app_server_protocol::LoginApiKeyParams;
 use codex_app_server_protocol::NewConversationParams;
 use codex_app_server_protocol::RemoveConversationListenerParams;
@@ -30,7 +29,8 @@ use codex_app_server_protocol::SendUserMessageParams;
 use codex_app_server_protocol::SendUserTurnParams;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SetDefaultModelParams;
-use codex_app_server_protocol::UploadFeedbackParams;
+use codex_app_server_protocol::TurnInterruptParams;
+use codex_app_server_protocol::TurnStartParams;
 
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
@@ -305,6 +305,24 @@ impl McpProcess {
     /// Send a `loginChatGpt` JSON-RPC request.
     pub async fn send_login_chat_gpt_request(&mut self) -> anyhow::Result<i64> {
         self.send_request("loginChatGpt", None).await
+    }
+
+    /// Send a `turn/start` JSON-RPC request (v2).
+    pub async fn send_turn_start_request(
+        &mut self,
+        params: TurnStartParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("turn/start", params).await
+    }
+
+    /// Send a `turn/interrupt` JSON-RPC request (v2).
+    pub async fn send_turn_interrupt_request(
+        &mut self,
+        params: TurnInterruptParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("turn/interrupt", params).await
     }
 
     /// Send a `cancelLoginChatGpt` JSON-RPC request.

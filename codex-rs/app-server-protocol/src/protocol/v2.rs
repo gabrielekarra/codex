@@ -1,17 +1,122 @@
+use std::path::PathBuf;
+
 use crate::protocol::common::AuthMode;
 use codex_protocol::ConversationId;
 use codex_protocol::account::PlanType;
 use codex_protocol::config_types::ReasoningEffort;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::protocol::RateLimitSnapshot;
+use mcp_types::ContentBlock as McpContentBlock;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use ts_rs::TS;
 use uuid::Uuid;
 
+// Macro to declare a camelCased API v2 enum mirroring a core enum which
+// tends to use kebab-case.
+macro_rules! v2_enum_from_core {
+    (
+        pub enum $Name:ident from $Src:path { $( $Variant:ident ),+ $(,)? }
+    ) => {
+        #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+        #[serde(rename_all = "camelCase")]
+        #[ts(export_to = "v2/")]
+        pub enum $Name { $( $Variant ),+ }
+
+        impl $Name {
+            pub fn to_core(self) -> $Src {
+                match self { $( $Name::$Variant => <$Src>::$Variant ),+ }
+            }
+        }
+
+        impl From<$Src> for $Name {
+            fn from(value: $Src) -> Self {
+                match value { $( <$Src>::$Variant => $Name::$Variant ),+ }
+            }
+        }
+    };
+}
+
+v2_enum_from_core!(
+    pub enum AskForApproval from codex_protocol::protocol::AskForApproval {
+        UnlessTrusted, OnFailure, OnRequest, Never
+    }
+);
+
+v2_enum_from_core!(
+    pub enum SandboxMode from codex_protocol::config_types::SandboxMode {
+        ReadOnly, WorkspaceWrite, DangerFullAccess
+    }
+);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(tag = "mode", rename_all = "camelCase")]
+#[ts(tag = "mode")]
+#[ts(export_to = "v2/")]
+pub enum SandboxPolicy {
+    DangerFullAccess,
+    ReadOnly,
+    WorkspaceWrite {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        writable_roots: Vec<PathBuf>,
+        #[serde(default)]
+        network_access: bool,
+        #[serde(default)]
+        exclude_tmpdir_env_var: bool,
+        #[serde(default)]
+        exclude_slash_tmp: bool,
+    },
+}
+
+impl SandboxPolicy {
+    pub fn to_core(&self) -> codex_protocol::protocol::SandboxPolicy {
+        match self {
+            SandboxPolicy::DangerFullAccess => {
+                codex_protocol::protocol::SandboxPolicy::DangerFullAccess
+            }
+            SandboxPolicy::ReadOnly => codex_protocol::protocol::SandboxPolicy::ReadOnly,
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            } => codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
+                writable_roots: writable_roots.clone(),
+                network_access: *network_access,
+                exclude_tmpdir_env_var: *exclude_tmpdir_env_var,
+                exclude_slash_tmp: *exclude_slash_tmp,
+            },
+        }
+    }
+}
+
+impl From<codex_protocol::protocol::SandboxPolicy> for SandboxPolicy {
+    fn from(value: codex_protocol::protocol::SandboxPolicy) -> Self {
+        match value {
+            codex_protocol::protocol::SandboxPolicy::DangerFullAccess => {
+                SandboxPolicy::DangerFullAccess
+            }
+            codex_protocol::protocol::SandboxPolicy::ReadOnly => SandboxPolicy::ReadOnly,
+            codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            } => SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            },
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(tag = "type")]
+#[ts(export_to = "v2/")]
 pub enum Account {
     #[serde(rename = "apiKey", rename_all = "camelCase")]
     #[ts(rename = "apiKey", rename_all = "camelCase")]
@@ -120,6 +225,292 @@ pub struct UploadFeedbackParams {
 #[serde(rename_all = "camelCase")]
 pub struct UploadFeedbackResponse {
     pub thread_id: String,
+}
+
+// === Threads, Turns, and Items ===
+// Thread APIs
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct Thread {
+    pub id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct Turn {
+    pub id: String,
+    pub items: Vec<ThreadItem>,
+    pub status: TurnStatus,
+    pub error: Option<TurnError>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnError {
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum TurnStatus {
+    Completed,
+    Interrupted,
+    Failed,
+    InProgress,
+}
+
+// Turn APIs
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnStartParams {
+    pub thread_id: String,
+    pub input: Vec<UserInput>,
+    /// Override the working directory for this turn and subsequent turns.
+    pub cwd: Option<PathBuf>,
+    /// Override the approval policy for this turn and subsequent turns.
+    pub approval_policy: Option<AskForApproval>,
+    /// Override the sandbox policy for this turn and subsequent turns.
+    pub sandbox_policy: Option<SandboxPolicy>,
+    /// Override the model for this turn and subsequent turns.
+    pub model: Option<String>,
+    /// Override the reasoning effort for this turn and subsequent turns.
+    pub effort: Option<ReasoningEffort>,
+    /// Override the reasoning summary for this turn and subsequent turns.
+    pub summary: Option<ReasoningSummary>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnStartResponse {
+    pub turn: Turn,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnInterruptParams {
+    pub thread_id: String,
+    pub turn_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnInterruptResponse {}
+
+// User input types
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type")]
+#[ts(export_to = "v2/")]
+pub enum UserInput {
+    Text { text: String },
+    Image { url: String },
+    LocalImage { path: PathBuf },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type")]
+#[ts(export_to = "v2/")]
+pub enum ThreadItem {
+    UserMessage {
+        id: String,
+        content: Vec<UserInput>,
+    },
+    AgentMessage {
+        id: String,
+        text: String,
+    },
+    Reasoning {
+        id: String,
+        text: String,
+    },
+    CommandExecution {
+        id: String,
+        command: String,
+        aggregated_output: String,
+        exit_code: Option<i32>,
+        status: CommandExecutionStatus,
+        duration_ms: Option<i64>,
+    },
+    FileChange {
+        id: String,
+        changes: Vec<FileUpdateChange>,
+        status: PatchApplyStatus,
+    },
+    McpToolCall {
+        id: String,
+        server: String,
+        tool: String,
+        status: McpToolCallStatus,
+        arguments: serde_json::Value,
+        result: Option<McpToolCallResult>,
+        error: Option<McpToolCallError>,
+    },
+    WebSearch {
+        id: String,
+        query: String,
+    },
+    TodoList {
+        id: String,
+        items: Vec<TodoItem>,
+    },
+    ImageView {
+        id: String,
+        path: String,
+    },
+    CodeReview {
+        id: String,
+        review: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum CommandExecutionStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct FileUpdateChange {
+    pub path: String,
+    pub kind: PatchChangeKind,
+    pub diff: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum PatchChangeKind {
+    Add,
+    Delete,
+    Update,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum PatchApplyStatus {
+    Completed,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum McpToolCallStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpToolCallResult {
+    pub content: Vec<McpContentBlock>,
+    pub structured_content: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpToolCallError {
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TodoItem {
+    pub id: String,
+    pub text: String,
+    pub completed: bool,
+}
+
+// === Server Notifications ===
+// Thread/Turn lifecycle notifications and item progress events
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadStartedNotification {
+    pub thread: Thread,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnStartedNotification {
+    pub turn: Turn,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct Usage {
+    pub input_tokens: i32,
+    pub cached_input_tokens: i32,
+    pub output_tokens: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnCompletedNotification {
+    pub turn: Turn,
+    // TODO: should usage be stored on the Turn object, and we return that instead?
+    pub usage: Usage,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ItemStartedNotification {
+    pub item: ThreadItem,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ItemCompletedNotification {
+    pub item: ThreadItem,
+}
+
+// Item-specific progress notifications
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct AgentMessageDeltaNotification {
+    pub item_id: String,
+    pub delta: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct CommandExecutionOutputDeltaNotification {
+    pub item_id: String,
+    pub delta: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct McpToolCallProgressNotification {
+    pub item_id: String,
+    pub message: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

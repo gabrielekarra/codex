@@ -21,8 +21,8 @@ pub enum Account {
     #[ts(rename = "apiKey", rename_all = "camelCase")]
     ApiKey { api_key: String },
 
-    #[serde(rename = "chatgpt", rename_all = "camelCase")]
-    #[ts(rename = "chatgpt", rename_all = "camelCase")]
+    #[serde(rename = "chatGpt", rename_all = "camelCase")]
+    #[ts(rename = "chatGpt", rename_all = "camelCase")]
     ChatGpt {
         email: Option<String>,
         plan_type: PlanType,
@@ -34,15 +34,15 @@ pub enum Account {
 #[ts(tag = "type")]
 #[ts(export_to = "v2/")]
 pub enum LoginAccountParams {
-    #[serde(rename = "apiKey")]
-    #[ts(rename = "apiKey")]
+    #[serde(rename = "apiKey", rename_all = "camelCase")]
+    #[ts(rename = "apiKey", rename_all = "camelCase")]
     ApiKey {
         #[serde(rename = "apiKey")]
         #[ts(rename = "apiKey")]
         api_key: String,
     },
-    #[serde(rename = "chatgpt")]
-    #[ts(rename = "chatgpt")]
+    #[serde(rename = "chatGpt")]
+    #[ts(rename = "chatGpt")]
     ChatGpt,
 }
 
@@ -51,11 +51,11 @@ pub enum LoginAccountParams {
 #[ts(tag = "type")]
 #[ts(export_to = "v2/")]
 pub enum LoginAccountResponse {
-    #[serde(rename = "apiKey")]
-    #[ts(rename = "apiKey")]
+    #[serde(rename = "apiKey", rename_all = "camelCase")]
+    #[ts(rename = "apiKey", rename_all = "camelCase")]
     ApiKey {},
-    #[serde(rename = "chatgpt")]
-    #[ts(rename = "chatgpt")]
+    #[serde(rename = "chatGpt", rename_all = "camelCase")]
+    #[ts(rename = "chatGpt", rename_all = "camelCase")]
     ChatGpt {
         // Use plain String for identifiers to avoid TS/JSON Schema quirks around uuid-specific types.
         // Convert to/from UUIDs at the application layer as needed.
